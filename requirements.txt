@@ -1,0 +1,4 @@
+pytest==7.4.0
+PySide6==6.5.2
+shotgun_api3==3.4.0
+requests==2.31.0
