@@ -23,6 +23,20 @@ except:
     from PySide2.QtCore import *
     from PySide2.QtGui import *
 
+
+script_name = "kangseyoung"
+
+with open('/home/rapa/script_key.key', 'rb') as key_file:
+    key = key_file.read()
+
+with open('/home/rapa/script_key.bin', 'rb') as enc_file:
+    encrypted_data = enc_file.read()
+
+# 2. Fernet 객체를 사용하여 복호화
+cipher_suite = Fernet(key)
+decrypted_data = cipher_suite.decrypt(encrypted_data)
+decoded_key = decrypted_data.decode()
+
 # Import custom Maya and Publisher modules
 from Publisher.Maya.get_maya_current_path import MayaCurrentPathImporter
 from Publisher.Maya.maya_pub_data_manager import MayaOutlinerInfoCatcher, MayaFileSaver
@@ -58,7 +72,7 @@ class PublishHandler(QMainWindow, DataExplorer):
         self.sg = Shotgun(
             "https://4thacademy.shotgrid.autodesk.com/",  
             script_name="kangseyoung",
-            api_key="imthtqts8zqqXylfckoiihx-z"
+            api_key=decoded_key
         )
         # Initialize other components
         self.infocatcher = MayaOutlinerInfoCatcher()
@@ -418,4 +432,11 @@ class Screen_Capture(QWidget):
             screenshot.save(screenshot_file_path, "jpg", quality=100)
             print(f"{screenshot_file_path}에 스크린샷이 저장되었습니다.")
             pixmap = QPixmap(screenshot_file_path)
-            self.label_thum_img.setPixmap(pix
+            self.label_thum_img.setPixmap(pixmap)
+            self.label_thum_img.setScaledContents(True)
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = PublishHandler()
+    window.show()
+    sys.exit(app.exec())
