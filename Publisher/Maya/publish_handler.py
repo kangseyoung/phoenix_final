@@ -248,38 +248,35 @@ class PublishHandler(QMainWindow, DataExplorer):
     def upload_to_shotgrid(self):
         self.save_checked_data()
 
-        # Example logging for debug
         print(f"Upload path: {self.pub_path}")
-        published_file_type = self.sg.find_one("PublishedFileType", [["code", "is", "Maya Scene"]], ["id"])
-        if not published_file_type:
-            print("'Maya Scene' not found.")
+        if not self.pub_path:
+            print("퍼블리시할 경로가 지정되지 않았습니다.")
             return
 
-        # Retrieve relevant info
         user_id = self.get_user_id()
         pub_file = os.path.basename(self.pub_path)
         code = pub_file.split(".")[0]
         task = self.version.get("sg_task")
         task_id = task.get("id")
         entity = self.version.get('entity')
+        description = self.ui.description.toPlainText()
 
-        # Create new version and publish file to ShotGrid
-        new_version = self.sg.create('Version', {
-            'entity': entity,
-            'sg_task': {'type': 'Task', 'id': task_id},
-            'code': code,
-            'description': self.ui.description.toPlainText(),
-            'project': {'type': 'Project', 'id': 191},
-            'sg_path': self.pub_path,
-            'sg_status_list': 'pub',
-            'sg_version_file_type': published_file_type,
-            "user": {"type": "HumanUser", "id": user_id}
-        })
-        print(f"Version {new_version['code']} created.")
-
-        # Upload slate or other media
-        self.sg.upload("Version", new_version['id'], self.pub_path, field_name="sg_uploaded_movie")
-
+        # ShotGrid 버전 생성
+        try:
+            new_version = self.sg_uploader.create_version(
+                entity=entity,
+                task_id=task_id,
+                code=code,
+                description=description,
+                project_id=191,
+                pub_path=self.pub_path,
+                file_type="Maya Scene",  # 퍼블리시 파일 타입 (예: 'Maya Scene')
+                user_id=user_id
+            )
+            # 파일 업로드
+            self.sg_uploader.upload_file(new_version['id'], self.pub_path)
+        except Exception as e:
+            print(f"ShotGrid 업로드 중 오류 발생: {e}")
     # Helper function to manage selected items for publishing
     def save_checked_data(self):
         print("file_saver 실행중..")
