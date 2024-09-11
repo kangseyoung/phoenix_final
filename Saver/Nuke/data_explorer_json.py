@@ -14,7 +14,8 @@ class DataExplorerJson:
         self.make_json_path()
 
     def make_json_path(self):   # JSON파일이 저장될 경로 설정
-        root_path = '/home/rapa/phoenix_pipeline_folders/'
+        self.root_path = os.path.expanduser('~')
+        root_path = f'{self.root_path}/_phoenix_/Saver'
         file_path = os.path.join(root_path, 'project_json')
         if not os.path.exists(file_path):
             os.makedirs(file_path)
@@ -52,7 +53,7 @@ class DataExplorerJson:
     
     def download_thumbnail(self, task_id, save_path=None):  # 썸네일 다운로드하기
         if not save_path:
-            save_path = '/home/rapa/thumbnail'
+            save_path = f'{self.root_path}/_phoenix_/Saver/thumbnail'
         path_list = {}
 
         versions = self.sg.find("Version", [['sg_task', 'is', {'type': 'Task', 'id': task_id}]], 
@@ -63,7 +64,6 @@ class DataExplorerJson:
             version_code = version['code']
 
             if not version.get('image'):
-                print(f"Version {version_code}에 대한 썸네일이 없습니다.")
                 continue  # 다음 버전으로 건너뜀
             
             thumbnail_url = version['image']
@@ -71,10 +71,22 @@ class DataExplorerJson:
             if not os.path.exists(save_path):
                 os.makedirs(save_path)
 
+            # 저장될 파일 경로
+            file_path = f'{save_path}/version_{version_code}_thumbnail.jpg'
+            
+            # 파일이 이미 존재하면 다운로드를 건너뜀
+            if os.path.exists(file_path):
+                path_list[version_id] = file_path
+                # print(f"""{version_code}'s thumbnail already exists""")
+                continue
+
             try:
+                # 썸네일 다운로드
+                print(f"""Downloading {version_code}'s thumbnails...""")
                 with requests.get(thumbnail_url, stream=True) as response:
                     response.raise_for_status()
-
+                    
+                    # 파일을 저장
                     file_path = f'{save_path}/version_{version_code}_thumbnail.jpg'
                     with open(file_path, 'wb') as file:
                         shutil.copyfileobj(response.raw, file)
@@ -83,9 +95,6 @@ class DataExplorerJson:
                 print(f"Failed to download thumbnail for version {version_code}: {e}")
                 continue  # 현재 버전은 건너뛰고 다음 버전으로 이동
             
-        # if not path_list:
-        #     print(f"No thumbnails found for task_id {task_id}.")
-
         return path_list
     
     def make_assets_json(self, project_id: int):    # 에셋 목록 JSON만들기
@@ -125,7 +134,7 @@ class DataExplorerJson:
                             ["id"])
             for asset_task in asset_tasks:
                 versions = self.sg.find("Version", [['sg_task', 'is', {'type': 'Task', 'id': asset_task['id']}]], 
-                            ["id", "code", "sg_status_list", "created_at", "user"])
+                            ["id", "code", "sg_status_list", "created_at", "sg_version_file_type", "user"])
                 wip = {}
                 pub = {}
                 
@@ -136,13 +145,13 @@ class DataExplorerJson:
                     version_info = {
                         'id' : version['id'],
                         'created_at' : version.get('created_at').isoformat() if version.get('created_at') else 'No Date',
-                        'artist' : version.get('user', {}).get('name', 'Unknown Artist')
+                        'artist' : version.get('user', {}).get('name', 'Unknown Artist'),
+                        'file_type' : version.get('sg_version_file_type').get('name', 'No FileType') if version.get('sg_version_file_type') is not None else None,
+                        'thumbnail' : thumbnail_paths.get(version['id'], 'No Thumbnail')
                     }
                     if version['sg_status_list'] == 'wip':
-                        version_info['thumbnail'] = thumbnail_paths.get(version['id'], 'No Thumbnail')
                         wip[version['code']] = version_info
                     if version['sg_status_list'] == 'pub':
-                        version_info['thumbnail'] = thumbnail_paths.get(version['id'], 'No Thumbnail')
                         pub[version['code']] = version_info
                 
                 asset_versions_all.append({
@@ -204,7 +213,7 @@ class DataExplorerJson:
                             ["id"])
             for shot_task in shot_tasks:
                 versions = self.sg.find("Version", [['sg_task', 'is', {'type': 'Task', 'id': shot_task['id']}]], 
-                            ["id", "code", "sg_status_list", "created_at", "user"])
+                            ["id", "code", "sg_status_list", "created_at", "sg_version_file_type", "user"])
                 wip = {}
                 pub = {}
                 
@@ -215,13 +224,13 @@ class DataExplorerJson:
                     version_info = {
                         'id': version['id'],
                         'created_at': version.get('created_at').isoformat() if version.get('created_at') else 'No Date',
-                        'artist': version.get('user', {}).get('name', 'Unknown Artist')
+                        'artist': version.get('user', {}).get('name', 'Unknown Artist'),
+                        'file_type' : version.get('sg_version_file_type',{}).get('name', 'No FileType') if version.get('sg_version_file_type') is not None else None,
+                        'thumbnail' : thumbnail_paths.get(version['id'], 'No Thumbnail')
                     }
                     if version['sg_status_list'] == 'wip':
-                        version_info['thumbnail'] = thumbnail_paths.get(version['id'], 'No Thumbnail')
                         wip[version['code']] = version_info
                     if version['sg_status_list'] == 'pub':
-                        version_info['thumbnail'] = thumbnail_paths.get(version['id'], 'No Thumbnail')
                         pub[version['code']] = version_info
 
                 shot_versions_all.append({
@@ -293,6 +302,64 @@ class DataExplorerJson:
         
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump({'timestamp': datetime.now().isoformat(), 'shot': shot_list, 'asset': asset_list}, f, ensure_ascii=False, indent=4)
+        
+    def update_version_json(self, project_id, created_ver_id, save_info, entity_type):   # 샷그리드에 올라간 정보를 바탕으로 version json 수정해주기
+        """
+        update된 샷그리드 정보를 바탕으로 version과 관련된 json 데이터를 수정합니다.
+        """
+        asset_version_path = os.path.join(self.json_path, f'asset_versions_proj{project_id}.json')
+        shot_version_path = os.path.join(self.json_path, f'shot_versions_proj{project_id}.json')
+        
+        task_id = save_info['task']['id']
+        
+        # 버전 아이디로 Json 업데이트에 필요한 정보 가져오기
+        version = self.sg.find_one("Version", [['id', 'is', created_ver_id]], 
+                            ["id", "code", "sg_status_list", "created_at", "sg_version_file_type", "user"])
+        
+        ver_name = version['code']
+        ver_id = version['id']
+        created_date = version['created_at'].isoformat()
+        artist = version['user']['name']
+        file_type = version['sg_version_file_type']['name']
+        
+        # Json에 업데이트할 wip정보 만들기
+        new_wip_data = {ver_name : {'id' : ver_id,
+                                    'created_at' : created_date,
+                                    'artist' : artist,
+                                    'file_type' : file_type,
+                                    'thumbnail' : 'No Thumbnail'}}
+        # 샷 데이터 만들기
+        if entity_type == 'Shots':
+            with open(shot_version_path, 'r', encoding='utf-8') as f:
+                shot_tasks = json.load(f)
+            
+            for task in shot_tasks['data']:
+                if task['task_id'] == task_id:
+                    task['wip'].update(new_wip_data)
+                    break
+                
+            with open(shot_version_path, 'w', encoding='utf-8') as f:
+                json.dump(shot_tasks, f, indent=4)
+                
+                return print(f'shot_versions_proj{project_id}.json 파일에 {ver_name}의 정보를 업데이트 하였습니다.')
+                
+        # 에셋 데이터 만들기
+        elif entity_type == 'Assets':
+            with open(asset_version_path, 'r', encoding='utf-8') as f:
+                asset_tasks = json.load(f)
+                
+            for task in asset_tasks['data']:
+                if task['task_id'] == task_id:
+                    task['wip'].update(new_wip_data)
+                    break
+                
+            with open(asset_version_path, 'w', encoding='utf-8') as f:
+                json.dump(asset_tasks, f, indent=4)
+            
+            return print(f'asset_versions_proj{project_id}.json 파일에 {ver_name}의 정보를 업데이트 하였습니다.')
+        
+        
+        
         
 if __name__ == "__main__":
     test = DataExplorerJson()

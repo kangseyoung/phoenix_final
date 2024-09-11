@@ -1,0 +1,21 @@
+{
+    "email": "carlton368@gmail.com",
+    "user_id": 101,
+    "project_id": 191,
+    "project_name": "phoenix",
+    "project_resolution_width": "1920",
+    "project_resolution_height": "1080",
+    "entity_type": "Shot",
+    "task_id": 7432,
+    "version_code": "CarChase_0500_cmp_v001",
+    "version_id": 8717,
+    "version_type": "wip",
+    "task_name": "cmp",
+    "sequence_name": "CarChase_0500",
+    "path": "/home/rapa/phoenix_pipeline_folders/phoenix/Shots/CarChase/CarChase_0500/cmp/wip/CarChase_0500_cmp_v001.nk",
+    "file_name": "CarChase_0500_cmp_v001",
+    "start_frame": 1001,
+    "end_frame": 1100,
+    "duration": null,
+    "fps": "24"
+}

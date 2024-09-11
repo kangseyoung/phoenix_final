@@ -509,8 +509,89 @@ class MayaFileSaver():
         subprocess.call(cmd, shell=True)
         
         return mov_path  # 동영상 경로를 반환
+    
+    def rig_make_slate(self,path,project):
+        
+        rig_playblast_scene_setter = PlayblastSceneSetter()
+        rig_playblast_scene_setter.run_playblast_setup_for_rig()
+        pub_dir = os.path.dirname(path)
+        pub_name = os.path.basename(path)
+        proxy_path = f"{pub_dir}/.proxy"
+        proxy_format = "jpg"
+        image_path = os.path.join(proxy_path, 'proxy.%04d.' + proxy_format) #playblast에서 만든이미지 경로
+        mov_path = f"{pub_dir}/.slate/slate.mov"
+        
+        if not os.path.exists(f"{pub_dir}/.slate"):
+            os.makedirs(f"{pub_dir}/.slate")
+        if not os.path.exists(f"{pub_dir}/.proxy"):
+            os.makedirs(f"{pub_dir}/.proxy")
+        
+        start_frame = cmds.playbackOptions(query=True, min=True)
+        last_frame = cmds.playbackOptions(query=True, max=True)
+        render_width = 1920
+        render_height = 1080
+        
+        cameras = cmds.ls(type='camera')
+        print(cameras)
+        for camera_ in cameras:
+            if camera_ == "turntable_cameraShape1":
+                cam_transform = cmds.listRelatives(camera_, parent=True)[0]
+                print(f"Checking camera transform: {cam_transform}")
+        model_panels = cmds.getPanel(type="modelPanel")
+        if model_panels:
+            for panel in model_panels:
+                cmds.modelEditor(panel, e=True, displayLights="all")
+                cmds.modelEditor(panel, e=True, shadows=True)
+                cmds.modelEditor(panel, e=True, grid=False)
+                print("조명과 그림자가 활성화 되었고 그리드는 비활성화 되었습니다.")
 
+        cmds.lookThru(cam_transform)
+        
+        # PLAYBLAST MAYA API
+        cmds.playblast(filename=os.path.join(proxy_path, 'proxy'), format='image', compression=proxy_format,
+                    startTime=start_frame, endTime=last_frame, forceOverwrite=True,
+                    widthHeight=(render_width, render_height), percent=100,
+                    showOrnaments=True, framePadding=4, quality=100, viewer=False) #
+        
+        # FFMPEG 명령어 생성 및 실행
+        first = 1
+        frame_rate = 24 
+        ffmpeg = "ffmpeg"
+        slate_size = 60
+        font_path = "/home/rapa/phoenix/phoenix_pipeline/maya/playblast/font/Courier Regular/Courier Regular.ttf"
+        font_size = 40
+        frame_count = last_frame - start_frame
+        text_x_padding = 10
+        text_y_padding = 20
 
+        top_left = pub_name
+        top_center = project
+        top_right = datetime.date.today().strftime("%Y/%m/%d")
+        bot_left = f"1920 X 1080"
+        bot_center = ""        # split = file_basename.split(".")
+        # abc = split[0]
+        # abc_name = f"{abc}.abc" #abc 파일이름
+
+        frame_cmd = "'Frame \: %{eif\:n+"
+        frame_cmd += "%s\:d}' (%s)"  % (first, frame_count+1)
+        bot_right = frame_cmd
+
+        cmd = '%s -framerate %s -y -start_number %s ' % (ffmpeg, frame_rate, first)
+        cmd += '-i %s' % (image_path)
+        cmd += ' -vf "drawbox=y=0 :color=black :width=iw: height=%s :t=fill, ' % (slate_size)
+        cmd += 'drawbox=y=ih-%s :color=black :width=iw: height=%s :t=fill, ' % (slate_size, slate_size)
+        cmd += 'drawtext=fontfile=%s :fontsize=%s :fontcolor=white@0.7 :text=%s :x=%s :y=%s,' % (font_path, font_size, top_left, text_x_padding, text_y_padding)
+        cmd += 'drawtext=fontfile=%s :fontsize=%s :fontcolor=white@0.7 :text=%s :x=(w-text_w)/2 :y=%s,' % (font_path, font_size, top_center, text_y_padding)
+        cmd += 'drawtext=fontfile=%s :fontsize=%s :fontcolor=white@0.7 :text=%s :x=w-tw-%s :y=%s,' % (font_path, font_size, top_right, text_x_padding, text_y_padding)
+        cmd += 'drawtext=fontfile=%s :fontsize=%s :fontcolor=white@0.7 :text=%s :x=%s :y=h-th-%s,' % (font_path, font_size, bot_left, text_x_padding, text_y_padding)
+        cmd += 'drawtext=fontfile=%s :fontsize=%s :fontcolor=white@0.7 :text=%s :x=(w-text_w)/2 :y=h-th-%s,' % (font_path, font_size, bot_center, text_y_padding)
+        cmd += 'drawtext=fontfile=%s :fontsize=%s :fontcolor=white@0.7 :text=%s :x=w-tw-%s :y=h-th-%s' % (font_path, font_size, bot_right, text_x_padding, text_y_padding)
+        cmd += '"'
+        cmd += ' -c:v prores_ks -profile:v 3 -colorspace bt709 %s' % mov_path
+        
+        subprocess.call(cmd, shell=True)
+        return mov_path 
+        
     def shot_make_slate(self, path, project):
         """ 
         마야의 플레이 블라스트 기능을 이용해서 뷰포트를 이미지로 렌더링하고,

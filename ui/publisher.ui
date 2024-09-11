@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>938</width>
-    <height>714</height>
+    <width>964</width>
+    <height>721</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -15,16 +15,16 @@
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <property name="leftMargin">
-    <number>10</number>
+    <number>15</number>
    </property>
    <property name="topMargin">
-    <number>10</number>
+    <number>15</number>
    </property>
    <property name="rightMargin">
-    <number>10</number>
+    <number>15</number>
    </property>
    <property name="bottomMargin">
-    <number>10</number>
+    <number>15</number>
    </property>
    <item>
     <layout class="QHBoxLayout" name="horizontalLayout">
@@ -42,7 +42,6 @@
        <property name="font">
         <font>
          <pointsize>22</pointsize>
-         <weight>75</weight>
          <bold>true</bold>
         </font>
        </property>
@@ -92,6 +91,22 @@
       </widget>
      </item>
      <item>
+      <spacer name="horizontalSpacer">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Fixed</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>10</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
       <layout class="QVBoxLayout" name="verticalLayout_3">
        <property name="rightMargin">
         <number>0</number>
@@ -101,7 +116,7 @@
          <property name="rightMargin">
           <number>0</number>
          </property>
-         <item alignment="Qt::AlignHCenter">
+         <item>
           <widget class="QLabel" name="label_icon">
            <property name="sizePolicy">
             <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
@@ -133,6 +148,18 @@
           <layout class="QVBoxLayout" name="verticalLayout_4">
            <item>
             <widget class="QLabel" name="label_file_name">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>16777215</width>
+               <height>35</height>
+              </size>
+             </property>
              <property name="font">
               <font>
                <pointsize>19</pointsize>
@@ -145,6 +172,21 @@
            </item>
            <item>
             <widget class="QLabel" name="label_file_type">
+             <property name="enabled">
+              <bool>true</bool>
+             </property>
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>16777215</width>
+               <height>30</height>
+              </size>
+             </property>
              <property name="text">
               <string>Maya Session</string>
              </property>
@@ -153,22 +195,6 @@
           </layout>
          </item>
         </layout>
-       </item>
-       <item>
-        <spacer name="verticalSpacer_5">
-         <property name="orientation">
-          <enum>Qt::Vertical</enum>
-         </property>
-         <property name="sizeType">
-          <enum>QSizePolicy::Fixed</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>20</width>
-           <height>20</height>
-          </size>
-         </property>
-        </spacer>
        </item>
        <item>
         <spacer name="verticalSpacer_4">
@@ -222,6 +248,18 @@
             <enum>QFrame::Raised</enum>
            </property>
            <layout class="QVBoxLayout" name="verticalLayout_6">
+            <property name="leftMargin">
+             <number>0</number>
+            </property>
+            <property name="topMargin">
+             <number>0</number>
+            </property>
+            <property name="rightMargin">
+             <number>0</number>
+            </property>
+            <property name="bottomMargin">
+             <number>0</number>
+            </property>
             <item>
              <widget class="QLabel" name="label_thum_img">
               <property name="text">
@@ -312,7 +350,6 @@
         <widget class="QLabel" name="label_file_name2">
          <property name="font">
           <font>
-           <weight>75</weight>
            <bold>true</bold>
           </font>
          </property>
@@ -324,22 +361,38 @@
        <item>
         <widget class="QLabel" name="label_file_name_context">
          <property name="text">
-          <string>-Publish to Flow Production Tracking</string>
+          <string>- Publish to Flow Production Tracking</string>
          </property>
         </widget>
        </item>
        <item>
-        <spacer name="verticalSpacer_2">
+        <spacer name="verticalSpacer_5">
          <property name="orientation">
           <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeType">
+          <enum>QSizePolicy::Fixed</enum>
          </property>
          <property name="sizeHint" stdset="0">
           <size>
            <width>20</width>
-           <height>40</height>
+           <height>20</height>
           </size>
          </property>
         </spacer>
+       </item>
+       <item>
+        <widget class="QPlainTextEdit" name="plainTextEdit_validation_report">
+         <property name="frameShape">
+          <enum>QFrame::NoFrame</enum>
+         </property>
+         <property name="horizontalScrollBarPolicy">
+          <enum>Qt::ScrollBarAlwaysOff</enum>
+         </property>
+         <property name="readOnly">
+          <bool>true</bool>
+         </property>
+        </widget>
        </item>
       </layout>
      </item>

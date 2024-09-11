@@ -36,6 +36,21 @@ class PlayblastSceneSetter:
         if self.import_file():
             for shader_name in shader_names:
                 self.check_shader_exists(shader_name)
+                
+    def set_aces_color_management(self):
+    # 색상 관리 활성화
+        cmds.colorManagementPrefs(e=True, cmEnabled=True)
+        
+        # 워킹 스페이스를 ACES로 설정
+        cmds.colorManagementPrefs(e=True, renderingSpaceName='ACES - ACEScg')
+        
+        # 뷰포트의 뷰 트랜스폼을 ACES sRGB로 설정
+        cmds.colorManagementPrefs(e=True, viewTransformName='ACES 1.0 SDR-video')
+        
+        # 렌더링 출력 색공간 설정 (ACEScg 출력)
+        cmds.setAttr('defaultRenderGlobals.outputColorSpace', 'ACES - ACEScg', type='string')
+        
+        print("ACES color management settings applied.")
 
     # grp그룹 "rt_gr"로 한 번 더 그룹
     def group_geo_objects(self):
@@ -88,7 +103,7 @@ class PlayblastSceneSetter:
             depth = bounding_box[5] - bounding_box[2]
 
             # 카메라 거리 계산 1.5배
-            distance = max(width, height, depth) * 1.5
+            distance = max(width, height, depth) * 2.5
 
             # 새로운 카메라 생성
             camera_name = cmds.camera(name="turntable_camera")[0]
@@ -107,6 +122,14 @@ class PlayblastSceneSetter:
             print(f"'{main_group}'를 찾을 수 없습니다.")
             return None
 
+    def get_main_ctrl(self):
+        all_curves = cmds.ls(type='nurbsCurve')
+        print(all_curves)
+        for curve in all_curves:
+            if curve == "*ALL_ctrl":
+                print(curve)
+        return "Ruby_ALL_ctrl"
+    
     def run_playblast_setup(self):
         # 1. 파일 임포트
         if not self.import_file():
@@ -131,9 +154,37 @@ class PlayblastSceneSetter:
         print("#  5. 조명과 그림자 활성화=")
         # 7. 라이트 높이 조정 (예: 'key_light' 이름의 라이트가 있는 경우)
         print("# 7. 라이트 높이 조정 (예: 'key_light' 이름의 라이트가 있는 경우)")
-        
 
-# import os
+    
+
+        
+        
+    def run_playblast_setup_for_rig(self):
+        # 1. 파일 임포트
+        if not self.import_file():
+            return
+        shaders = ["white_bg_lb"] 
+        self.import_shaders(shaders)
+        print("2. 쉐이더 임포트 (필요한 쉐이더 리스트 추가)")
+
+        # 3. 지오메트리 그룹화
+        main_ctrl = self.get_main_ctrl()
+        self.animate_rotation(main_ctrl)
+        
+        camera_name = self.create_camera(main_ctrl)
+        if not camera_name:
+            return 
+        print(" # 3. 지오메트리 그룹화")  
+        if not main_ctrl:
+            return print("그룹이름이 없습니다.")
+        # 4. 회전 애니메이션 설정
+        print("# 4. 회전 애니메이션 설정")
+        # 5. 조명과 그림자 활성화
+        self.use_all_lights_and_shadows()
+        print("#  5. 조명과 그림자 활성화=")
+        # 7. 라이트 높이 조정 (예: 'key_light' 이름의 라이트가 있는 경우)
+        print("# 7. 라이트 높이 조정 (예: 'key_light' 이름의 라이트가 있는 경우)")   
+
 # import datetime
 # print("실행됨!!")
 

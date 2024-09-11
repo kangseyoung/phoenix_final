@@ -1,75 +1,126 @@
 try:
     from PySide6.QtWidgets import *
     from PySide6.QtUiTools import QUiLoader
-    from PySide6.QtCore import QFile, Qt
-    from PySide6.QtGui import QPixmap, QFont
+    from PySide6.QtCore import QFile, Qt, QTimer
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QPixmap, QFont, QMovie
+    from PySide6.QtGui import QGuiApplication
 except:
     from PySide2.QtWidgets import *
     from PySide2.QtUiTools import QUiLoader
-    from PySide2.QtCore import QFile, Qt
-    from PySide2.QtGui import QPixmap, QFont
+    from PySide2.QtCore import QFile, Qt, QTimer
+    from PySide2.QtCore import QPoint
+    from PySide2.QtGui import QPixmap, QFont, QMovie
+    from PySide2.QtGui import QGuiApplication
     
-# from shotgun_api3 import Shotgun
 import sys
 import os
 import re
 import json
-# from Saver.Nuke.data_explorer_json import DataExplorerJson
-# from Saver.Nuke.get_nuke_path import NukeCurrentPathImporter
-# from Saver.Nuke.file_saver import FileSaver
-from data_explorer_json import DataExplorerJson
-from get_nuke_path import NukeCurrentPathImporter
-from file_saver import FileSaver
+import threading
 from functools import partial
-
-
+from file_saver import FileSaver
+from data_explorer_json import DataExplorerJson
+from ui_saver import Ui_Form
 """
 어떤 프로그램에서 모듈이 실행되는지 확인
 """
-# 마야에서 실행되는 경우
-if 'maya' in sys.modules:
-    try:
-        import maya.cmds as cmds  
-        from get_maya_current_path import MayaCurrentPathImporter
-        current_path_importer = MayaCurrentPathImporter()
-        current_path = current_path_importer.show_file_path()
-        in_maya = True
-    except ImportError:
-        in_maya = False
-# 누크에서 실행되는 경우
-elif 'nuke' in sys.modules:
-    try:
-        import nuke  
-        from get_nuke_path import NukeCurrentPathImporter
-        current_path_importer = NukeCurrentPathImporter()
-        current_path = current_path_importer.show_file_path()
-        print("------------누크에서 열림-------------------")
-        print(current_path)
-        in_nuke = True
-    except ImportError:
-        in_nuke = False
+try:
+    import nuke  
+    from get_nuke_path import NukeCurrentPathImporter
+    current_path_importer = NukeCurrentPathImporter()
+    current_path = current_path_importer.show_file_path()
+    print("------------누크에서 열림-------------------")
+    in_nuke = True
+except ImportError:
+    in_nuke = False
+
+class ShotgridWorker(threading.Thread):
+    """
+    로딩 페이지를 띄울때 동시에 JSON파일을 받는 클래스입니다.
+    """
+    
+    def __init__(self, project_id, user_id):
+        super().__init__()
+        self.explorer_json = DataExplorerJson()
+        self.project_id = project_id
+        self.user_id = user_id
+        self._stop_event = threading.Event()
+        self._on_task_finished = None
+
+    def run(self):
+        try:
+            while not self._stop_event.is_set():
+                # 데이터를 가져와 JSON 파일로 저장하는 작업을 수행합니다.
+                print("Starting JSON export...")
+                self.explorer_json.make_project_user_json(self.project_id, self.user_id)
+                print("Project user JSON created.")
+                self.explorer_json.make_assets_json(self.project_id)
+                print("Assets JSON created.")
+                self.explorer_json.make_shots_json(self.project_id)
+                print("Shots JSON created.")
+                self.explorer_json.make_user_assigned_work_json(self.project_id, self.user_id)
+                print("User assigned work JSON created.")
+
+                # 작업 완료 시그널을 발생시킵니다.
+                if self._on_task_finished:
+                    # 콜백을 UI 스레드의 이벤트 루프 끝에 예약함으로써 스레드가 안전하게 UI를 업데이트할 수 있도록 합니다.
+                    QTimer.singleShot(0, self._on_task_finished) 
+                
+                # on_task_finished 속성이 None이 아닐 때만 호출
+                if callable(self.on_task_finished):
+                    self.on_task_finished()
+                else:
+                    print("Warning: on_task_finished is not callable")
+                
+                self._stop_event.set()
+                print('-------------------------------------------')
+                
+        except Exception as e:
+            print(f"Error in thread: {e}")
+            # 여기에 로깅 추가 가능
+    def stop(self):
+        """스레드를 안전하게 종료합니다."""
+        self._stop_event.set()  # 스레드 종료 신호
+        self.join()  # 스레드가 종료될 때까지 대기합니다.
+        
+    @property    
+    def on_task_finished(self):
+        return self._on_task_finished
+    
+    @on_task_finished.setter
+    def on_task_finished(self, callback):
+        self._on_task_finished = callback
 
 class SaverUIHandler(QWidget):
     def __init__(self):
         super().__init__()
-        self.initial_path = current_path
-        self.setWindowTitle("Phoenix Save")
-        self.explorer_json = DataExplorerJson()
-        self.project_json_path = '/home/rapa/phoenix_pipeline_folders/project_json'
-        
-        # self.get_shotgrid_json()
-        
         self.setting()
-        self.events()
+        self.setWindowTitle("Phoenix Save")
+        self.find_root_path()
+        self.initial_path = current_path
+        self.explorer_json = DataExplorerJson()
+        self.project_json_path = f'{self.root_path}/_phoenix_/Saver/project_json'
+        self.connect_signals()
         self.first_show()
+        
+        # 원래 stdout을 저장합니다.
+        self.original_stdout = sys.stdout
+        
+        # Json파일을 로딩할때 gif 페이지를 보여줍니다.
+        self.show_loading_page()
+        
+        self.setup_search_mode()
+        
+        
     """
     이벤트 함수 모음
     """
-    def events(self):   # 시그널들 모음
+    def connect_signals(self):   # 시그널들 모음
         self.ui.tabWidget_pathtree.currentChanged.connect(self.event_tree_tab_changed)
-        # select_btn_list = ["shots_all","shots_none","assets_all","assets_none"]
-        # for i in select_btn_list:
-        #     getattr(self.ui,f"pushButton_{i}").clicked.connect(partial(self.event_select_btn,i))
+        select_btn_list = ["shots_all","shots_none","assets_all","assets_none"]
+        for i in select_btn_list:
+            getattr(self.ui,f"pushButton_{i}").clicked.connect(partial(self.event_select_btn,i))
         self.ui.checkBox_avaliable_ver.stateChanged.connect(self.set_new_file_ver)
         self.ui.checkBox_avaliable_path.stateChanged.connect(self.select_path)
         self.ui.pushButton_cancel.clicked.connect(self.close_ui)
@@ -79,6 +130,26 @@ class SaverUIHandler(QWidget):
         self.ui.treeWidget_shots.currentItemChanged.connect(self.show_shot_file_data)
         self.ui.spinBox_version.valueChanged.connect(self.event_save_info_changed)
         self.ui.comboBox_filetype.currentIndexChanged.connect(self.event_save_info_changed)
+        
+        # Search창 텍스트 변경시 이벤트 연결
+        self.ui.lineEdit_search_my_tasks.textChanged.connect(self.start_search_timer) 
+        self.ui.lineEdit_search_assets.textChanged.connect(self.start_search_timer)  
+        self.ui.lineEdit_search_shots.textChanged.connect(self.start_search_timer) 
+        self.ui.lineEdit_search_all.textChanged.connect(self.start_search_timer)  
+        self.ui.lineEdit_search_wip.textChanged.connect(self.start_search_timer)  
+        self.ui.lineEdit_search_pub.textChanged.connect(self.start_search_timer)  
+        
+        # Filter 체크박스 상태 변경시 이벤트 연결
+        self.ui.checkBox_mod.stateChanged.connect(self.filter_tree_by_checkboxes)
+        self.ui.checkBox_rig.stateChanged.connect(self.filter_tree_by_checkboxes)
+        self.ui.checkBox_lkd.stateChanged.connect(self.filter_tree_by_checkboxes)
+        
+        self.ui.checkBox_ani.stateChanged.connect(self.filter_tree_by_checkboxes)
+        self.ui.checkBox_lgt.stateChanged.connect(self.filter_tree_by_checkboxes)
+        self.ui.checkBox_cmp.stateChanged.connect(self.filter_tree_by_checkboxes)
+        self.ui.checkBox_mm.stateChanged.connect(self.filter_tree_by_checkboxes)
+        self.ui.checkBox_ly.stateChanged.connect(self.filter_tree_by_checkboxes)
+        self.ui.checkBox_fx.stateChanged.connect(self.filter_tree_by_checkboxes)
         
     def show_my_tasks_data(self):    # my task 폴더트리 선택시 실행되는 함수들
         if not self.ui.checkBox_avaliable_path.isChecked():
@@ -106,20 +177,23 @@ class SaverUIHandler(QWidget):
         if index == 0:
             self.set_all_table_list('my_task_signal')
             self.set_file_table_list('my_task_signal')
+            self.change_current_path('my_task_signal')
         elif index == 1:
             self.set_all_table_list('asset_signal')
             self.set_file_table_list('asset_signal')
+            self.change_current_path('asset_signal')
         elif index == 2:
             self.set_all_table_list('shot_signal')
             self.set_file_table_list('shot_signal')
+            self.change_current_path('shot_signal')
         
     def event_save_info_changed(self):  # 사용자가 버전이나 파일 타입 변경시 실행되는 함수들
         self.set_preview()
         self.set_work_area()
         
     def event_select_btn(self, button):   # select 버튼 작동
-        shots_list = ["ani", "light", "lookdev", "comp"]
-        assets_list = ["mod","texture","rig","character"]
+        shots_list = ["ani", "lgt", "mm", "cmp", "ly", "fx"]
+        assets_list = ["mod","rig","lkd"]
         
         if button == "shots_all":
             for i in shots_list:
@@ -134,12 +208,11 @@ class SaverUIHandler(QWidget):
         elif button == "assets_none":
             for i in assets_list:
                 getattr(self.ui,f"checkBox_{i}").setChecked(False)
-        
     """
     외부 정보 불러오기_id로
     """
     def get_project_id(self):   # 프로젝트 데이터 가져오기 
-        json_path = '/home/rapa/phoenix_pipeline_folders/pipeline/launcher/loader/data_from_loader/json_from_loader.json'
+        json_path = f'{self.root_path}/_phoenix_/Launcher/Loader/data_from_loader/json_from_loader.json'
         with open(json_path, 'r') as f:
             json_data = json.load(f)
         # 254
@@ -147,21 +220,12 @@ class SaverUIHandler(QWidget):
         return project_id
     
     def get_user_id(self):   # 유저 정보 가져오기
-        json_path = '/home/rapa/phoenix_pipeline_folders/pipeline/launcher/loader/data_from_loader/json_from_loader.json'
+        json_path = f'{self.root_path}/_phoenix_/Launcher/Loader/data_from_loader/json_from_loader.json'
         with open(json_path, 'r') as f:
             json_data = json.load(f)
         # 90
         usr_id = json_data['user_id']
         return usr_id
-    
-    def get_shotgrid_json(self):    # 시작할 때 샷그리드 정보 가져오기 ★
-        project_id = self.get_project_id()
-        user_id = self.get_user_id()
-        
-        self.explorer_json.make_project_user_json(project_id,user_id)
-        self.explorer_json.make_assets_json(project_id)
-        self.explorer_json.make_shots_json(project_id)
-        self.explorer_json.make_user_assigned_work_json(project_id,user_id)
     
     def get_project_name(self): # 프로젝트 이름받기 ★
         project_id = self.get_project_id()
@@ -225,9 +289,8 @@ class SaverUIHandler(QWidget):
         asset_task_list = js_data['data']
         asset_tasks =[]
         for asset_task in asset_task_list:
-            if not asset_task['asset_id'] == asset_id:
-                pass
-            asset_tasks.append(asset_task)
+            if asset_task['asset_id'] == asset_id:
+                asset_tasks.append(asset_task)
         
         return asset_tasks
     
@@ -278,16 +341,22 @@ class SaverUIHandler(QWidget):
         return shot_tasks
     
     """ All """
-    def get_assigned_work(self, user_id, project_id):   # 유저에게 배정된 작업만 가져오기(wtg,wip,pub) ★
-        project_id = self.get_project_id()
-        user_id = self.get_user_id()
-        
+    def get_assigned_work(self, user_id, project_id):
         json_path = f'{self.project_json_path}/user{user_id}_assigned_tasks_proj{project_id}.json'
-        with open(json_path, 'r') as f:
-            js_data = json.load(f)
-            
-        shot_list = js_data['shot']
-        asset_list = js_data['asset']
+        try:
+            if os.path.exists(json_path):
+                with open(json_path, 'r') as f:
+                    js_data = json.load(f)
+                shot_list = js_data['shot']
+                asset_list = js_data['asset']
+            else:
+                print(f"Warning: File not found - {json_path}")
+                shot_list = []
+                asset_list = []
+        except Exception as e:
+            print(f"Error loading assigned work: {e}")
+            shot_list = []
+            asset_list = []
         
         return shot_list, asset_list
     
@@ -422,41 +491,8 @@ class SaverUIHandler(QWidget):
             'project_id': project_id,
             'task_id': task_id
         }
-
-        # task_id에 맞는 에셋 정보 찾기
-        asset_task = None
-        for at in asset_tasks:
-            if at['id'] == task_id:
-                asset_task = at
-                break
-            
-        if asset_task:
-            asset = None
-            for a in assets:
-                if a['id'] == asset_task['asset_id']:
-                    asset = a
-                    break
-                
-            if asset:
-                asset_version = None
-                for av in asset_versions:
-                    if av['task_id'] == task_id:
-                        asset_version = av
-                        break
-                    
-                task_info.update({
-                    "task_name": asset_task.get('step_name', 'Unknown Task'),
-                    "entity_type": "Asset",
-                    "asset_id": asset['id'],
-                    "asset_name": asset['code'],
-                    "asset_type": asset['sg_asset_type'],
-                    "latest_version": self.get_latest_version_code(
-                        asset_version.get('wip', {}) if asset_version else {},
-                        asset_version.get('pub', {}) if asset_version else {}
-                    )
-                })
     
-        # task_id에 맞는 샷 정보 찾기
+        # task_id에 맞는 에셋 정보 찾기
         for asset_task in asset_tasks:
             if not asset_task['id'] == task_id:
                 continue
@@ -472,8 +508,7 @@ class SaverUIHandler(QWidget):
                         "asset_id": asset['id'],
                         "asset_name": asset['code'],
                         "asset_type": asset['sg_asset_type'],
-                        "latest_version": self.get_latest_version_code(asset_version.get('wip', {}),
-                                                                       asset_version.get('pub', {}))
+                        "latest_version": self.get_latest_version_code(asset_version.get('wip', {}), asset['code'],asset_task.get('step_name', 'Unknown Task'))
                     })
                     break
                 break
@@ -497,10 +532,7 @@ class SaverUIHandler(QWidget):
                             "shot_name": shot['code'],
                             "sequence_name": shot['sg_sequence']['name'],
                             "sequence_id": shot['sg_sequence']['id'],
-                            "latest_version": self.get_latest_version_code(
-                                shot_version.get('wip', {}),
-                                shot_version.get('pub', {})
-                            )
+                            "latest_version": self.get_latest_version_code(shot_version.get('wip', {}),shot['code'], shot_task.get('step_name', 'Unknown Task'))
                         })
                         break
                     break
@@ -508,8 +540,13 @@ class SaverUIHandler(QWidget):
             
         return task_info
    
-    def get_latest_version_code(self, wip_versions, pub_versions):  #★
-        versions = {**wip_versions, **pub_versions}
+    def get_latest_version_code(self, versions, asset_name, task_name): # wip파일중 가장 최신 버전의 파일 이름찾기
+        """
+        wip파일중 가장 최신 버전의 파일 이름을 찾습니다.
+        버전이 없을 경우 해당되는 엔티티와 태스크에 맞춰 
+        Ball_mod_v000과 같은 형태의 이름을 만들어줍니다.
+        """
+        
         max_version = None
         max_version_number = -1
 
@@ -521,7 +558,7 @@ class SaverUIHandler(QWidget):
                     max_version_number = version_number
                     max_version = ver_name
 
-        return max_version if max_version else 'no_version_v000'
+        return max_version if max_version else f'{asset_name}_{task_name}_v000'
    
     """
     외부 정보 불러오기_name으로
@@ -544,7 +581,6 @@ class SaverUIHandler(QWidget):
                 sequence_id = seq['id']
                 break
         # 시퀀스 ID 반환
-        
         return sequence_id
         
     def get_shot_id(self, sequence_id: int, shot_name: str): # 샷 이름으로 샷 ID 찾기 
@@ -610,7 +646,7 @@ class SaverUIHandler(QWidget):
 
         with open(task_file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)['data']
-
+            
         # 태스크 ID를 찾기
         for task in data:
             if entity_type == "Shot":
@@ -626,6 +662,9 @@ class SaverUIHandler(QWidget):
     기타 함수
     """
     def check_file_version(self): # 기존 파일들 버전 체크, str 출력
+        """
+        v001과 같은 형식으로 형태만 버전의 남겨주는 함수입니다.
+        """
         file_name_with_ver = os.path.basename(current_path)
         
         p = re.compile('v\d{3}')
@@ -645,6 +684,20 @@ class SaverUIHandler(QWidget):
         ext = file_name.split(".")[-1]
     
         return ext
+    
+    def check_right_entity(self):   # 파일 저장 전 entity가 같은 곳인지 체크
+        entity_check = False
+        _, current_entity = self.get_shotgrid_directory()
+        
+        root_folder = "/phoenix_pipeline_folders/"
+        p = re.compile(rf"{root_folder}(.+?)/(Shots|Assets)/(.+?)/[^/]+$")
+        p_data = p.search(self.initial_path) 
+        if p_data:
+            original_entity = p_data.group(2)
+            
+        if current_entity == original_entity:
+           entity_check = True
+        return entity_check 
     
     def check_shotgrid_version(self):   # 현재 지정된 경로에 따라 샷그리드에서 버전 체크
         save_info,_ = self.store_save_info()
@@ -747,6 +800,265 @@ class SaverUIHandler(QWidget):
             current_path = self.initial_path
         self.setup_bottom_layer()    
     
+    def find_task_id_item(self, tree_widget, task_id, current_item = None):    # 트리위젯에서 task_id를 가진 아이템을 리턴 
+        """
+        QTreeWidget에서 주어진 task_id를 가진 아이템을 찾습니다.
+        
+        return: task_id를 가진 QTreeWidgetItem (없으면 None 반환)
+        """
+        if current_item == None:
+            for i in range(tree_widget.topLevelItemCount()):
+                current_item  = tree_widget.topLevelItem(i)
+                found_item = self.find_task_id_item(tree_widget, task_id, current_item)  # 재귀 호출
+                if found_item:
+                    return found_item
+            
+        if not current_item.data(0,Qt.UserRole):
+            pass
+        if current_item.data(0, Qt.UserRole) == task_id:
+            return current_item
+        
+        if current_item.childCount() != 0:
+            for j in range(current_item.childCount()):
+                found_item = self.find_task_id_item(tree_widget, task_id, current_item.child(j))
+                if found_item:
+                    return found_item
+                
+        # 아이템을 찾지 못한 경우
+        return None
+
+    """
+    Json 파일이 만들어지기까지 로딩페이지 보여주는 함수
+    """
+    def show_loading_page(self):    # 로딩 페이지 보여주기
+        project_id = self.get_project_id()
+        user_id = self.get_user_id()
+        
+        # GIF 이미지 시작
+        movie = QMovie(f"{self.root_path}/_phoenix_/ui/image_source/Dark-Phoenix4.gif")
+        self.ui.label_gif.setMovie(movie)
+        movie.start()
+        
+        # QPlainTextEdit을 stdout에 연결합니다.
+        self.redirect_stdout_to_label()
+        
+        # ShotgridWorker 스레드를 설정하고 시작합니다.
+        shotgridworker = ShotgridWorker(project_id, user_id)
+        shotgridworker.on_task_finished = self.on_task_finished # 작업 완료 시 호출될 메서드 설정
+        shotgridworker.start()
+
+        # 로딩 화면 보여주기
+        self.ui.stackedWidget.setCurrentIndex(1)
+
+    def on_task_finished(self): # Json파일이 다 만들어지면 Saver UI 메인 화면 보여주기
+        # 스레드 작업이 완료되면 호출됩니다.
+        # self.first_show()
+        self.ui.stackedWidget.setCurrentIndex(0)
+        self.ui.label_gif.movie().stop()
+        
+        # stdout 원래대로 복원하기
+        sys.stdout = self.original_stdout
+        
+
+    def redirect_stdout_to_label(self): # stdout을 지정한 라벨로 옮겨주기
+        """라벨에 stdout을 리다이렉트합니다."""
+        sys.stdout = self
+        
+    def write(self, message):  # 라벨에 stdout을 띄워주기
+        """라벨에 메시지를 추가하는 메서드입니다."""
+        current_text = self.ui.label_print_status.text()
+        new_text = f"{current_text}\n{message}"
+        
+        # 줄 단위로 텍스트를 분리
+        lines = new_text.splitlines()
+        
+        # 줄 수가 최대 줄 수를 초과하면 첫 번째 줄을 제거
+        if len(lines) > 6:
+            lines = lines[-6:]
+            
+        # 줄을 다시 하나의 문자열로 합치기
+        updated_text = "\n".join(lines)
+        
+        self.ui.label_print_status.setText(updated_text)
+        
+    def flush(self):
+        """파일과 같은 인터페이스를 위해 flush 메서드를 추가합니다."""
+        pass
+
+    def closeEvent(self, event):    # 윈도우가 꺼지면 스레드를 안전하게 종료시킴
+        """
+        윈도우를 닫을 때 스레드가 아직 실행 중인 경우 안전하게 종료하도록 합니다.
+        """
+        if hasattr(self, 'shotgridworker'): # 객체(self)에 특정 속성(shotgridworker, 문자열)이 존재하는지를 확인하는 코드
+            self.shotgridworker.stop()
+        event.accept()
+    
+    """
+    Search 기능 관련 함수
+    """
+    def setup_search_mode(self):    # 검색 기능 셋팅
+        self.search_timer = QTimer(self)    # 검색 타이머 생성
+        self.search_timer.setSingleShot(True)   # 한 번만 실행되도록 설정
+        self.search_timer.timeout.connect(self.perform_search)  # 타임아웃 시 perform_search 메서드 호출
+        self.current_search_widget = None  # 현재 검색 중인 위젯을 추적하는 변수 추가
+        
+    def start_search_timer(self):   # 입력 전 너무 빨리 검색하는 것 방지하기 위한 시간
+        self.current_search_widget = self.sender()  # 현재 검색 중인 위젯 설정
+        self.search_timer.start(300)   # 300ms 후에 검색 실행
+        
+    def perform_search(self):   # 검색창에 따라 검색할 트리 할당
+        if self.current_search_widget:
+            search_text = self.current_search_widget.text().lower()
+            
+            if self.current_search_widget == self.ui.lineEdit_search_my_tasks:
+                self.filter_tree(self.ui.treeWidget_my_tasks, search_text)
+            elif self.current_search_widget == self.ui.lineEdit_search_assets:
+                self.filter_tree(self.ui.treeWidget_assets, search_text)
+            elif self.current_search_widget == self.ui.lineEdit_search_shots:
+                self.filter_tree(self.ui.treeWidget_shots, search_text)
+            # 버전 검색 기능
+            elif self.current_search_widget == self.ui.lineEdit_search_all:
+                self.filter_all_versions(search_text)
+            elif self.current_search_widget == self.ui.lineEdit_search_wip:
+                self.filter_versions(self.ui.tableWidget_list_wip, search_text)
+            elif self.current_search_widget == self.ui.lineEdit_search_pub:
+                self.filter_versions(self.ui.tableWidget_list_pub, search_text)
+        else:
+            print("현재 검색 중인 위젯이 없습니다.")
+            
+    def filter_tree(self, tree: QTreeWidget, search_text: str): # 할당된 트리의 첫 아이템 찾기
+        """
+        검색이 시작된 트리의 첫 아이템부터 재귀적 검사를 시행합니다.
+        """
+        # 루트 아이템부터 시작하여 모든 아이템을 재귀적으로 검사
+        root = tree.invisibleRootItem()
+        self.filter_tree_item(root, search_text)
+        
+    def filter_tree_item(self, item: QTreeWidgetItem, search_text: str) -> bool:    # 트리 아이템 필터링
+        """
+        검색어와 맞지 않는 아이템들을 hidden시켜줍니다.
+        검색어에 할당되는 아이템들을 parent아이템까지 모두 보여줍니다.
+        """
+        # 현재 아이템의 텍스트가 검색어를 포함하는지 확인
+        item_visible = False
+        if search_text in item.text(0).lower():
+            item_visible = True
+        
+        
+        # 자식 아이템들을 검사
+        child_count = item.childCount() 
+        for i in range(child_count):  
+            child = item.child(i)  
+            if self.filter_tree_item(child, search_text):   # 자식 아이템 필터링
+                item_visible = True
+        
+        # 아이템의 가시성 설정
+        if item_visible:
+            item.setHidden(False)
+        else:
+            item.setHidden(True)
+        
+        return item_visible
+
+    def filter_all_versions(self, search_text: str):    # all 트리 아이템 필터링
+        """
+        테이블 위젯에서 버전 네임을 검색하여 일치하지 않는 행을 숨깁니다.
+        """
+        root = self.ui.treeWidget_grid_total.invisibleRootItem()  # 트리의 루트 아이템 가져오기
+        child_count = root.childCount()  # 자식 아이템 수
+        for i in range(child_count):
+            parent_item = root.child(i)  # 부모 아이템 (Working 또는 Publishes)
+            table_widget = self.ui.treeWidget_grid_total.itemWidget(parent_item.child(0), 0)  # 테이블 위젯 가져오기
+            if isinstance(table_widget, QTableWidget):
+                for row in range(table_widget.rowCount()):
+                    cell_widget = table_widget.cellWidget(row, 1)  # 버전 이름이 있는 셀 가져오기
+                    if isinstance(cell_widget, QPlainTextEdit):
+                        version_name = cell_widget.toPlainText().splitlines()[1]  # 두 번째 라인에 버전 네임이 있다고 가정
+                        if search_text.lower() in version_name.lower():
+                            table_widget.setRowHidden(row, False)  # 검색어와 일치하면 행을 표시
+                        else:
+                            table_widget.setRowHidden(row, True)  # 검색어와 일치하지 않으면 행을 숨김
+    
+    def filter_versions(self, table_widget: QTableWidget, search_text: str):    # wip, pub 테이블 위젯 필터링
+        """
+        테이블 위젯에서 버전 네임을 검색하여 일치하지 않는 행을 숨깁니다.
+        """
+        for row in range(table_widget.rowCount()):
+            cell_widget = table_widget.cellWidget(row, 1)  # 버전 이름이 있는 셀 가져오기
+            if isinstance(cell_widget, QPlainTextEdit):
+                version_name = cell_widget.toPlainText().splitlines()[1]  # 두 번째 라인에 버전 네임이 있다고 가정
+                if search_text.lower() in version_name.lower():
+                    table_widget.setRowHidden(row, False)  # 검색어와 일치하면 행을 표시
+                else:
+                    table_widget.setRowHidden(row, True)  # 검색어와 일치하지 않으면 행을 숨김
+    
+    """
+    Filter 기능 관련 함수
+    """
+    def filter_tree_by_checkboxes(self):
+        """
+        체크박스 상태에 따라 treeWidget_assets 또는 treeWidget_shots를 필터링합니다.
+        'mod', 'rig', 'lkd' 체크박스는 treeWidget_assets를 필터링하고,
+        'ani', 'lgt', 'cmp', 'mm' 체크박스는 treeWidget_shots를 필터링합니다.
+        """
+        # Asset 체크박스 상태를 리스트로 저장
+        asset_checked_types = []
+        if self.ui.checkBox_mod.isChecked():
+            asset_checked_types.append('mod')
+        if self.ui.checkBox_rig.isChecked():
+            asset_checked_types.append('rig')
+        if self.ui.checkBox_lkd.isChecked():
+            asset_checked_types.append('lkd')
+
+        # Shot 체크박스 상태를 리스트로 저장
+        shot_checked_types = []
+        if self.ui.checkBox_ani.isChecked():
+            shot_checked_types.append('ani')
+        if self.ui.checkBox_lgt.isChecked():
+            shot_checked_types.append('lgt')
+        if self.ui.checkBox_cmp.isChecked():
+            shot_checked_types.append('cmp')
+        if self.ui.checkBox_mm.isChecked():
+            shot_checked_types.append('mm')
+        if self.ui.checkBox_ly.isChecked():
+            shot_checked_types.append('ly')
+        if self.ui.checkBox_fx.isChecked():
+            shot_checked_types.append('fx')
+
+        # treeWidget_assets 필터링
+        root_assets = self.ui.treeWidget_assets.invisibleRootItem()
+        self.filter_item(root_assets, asset_checked_types)
+
+        # treeWidget_shots 필터링
+        root_shots = self.ui.treeWidget_shots.invisibleRootItem()
+        self.filter_item(root_shots, shot_checked_types)
+        
+    def filter_item(self, item: QTreeWidgetItem, checked_types: list) -> bool:
+        """
+        주어진 아이템과 자식 아이템을 필터링하고, 조건에 맞는 아이템을 표시합니다.
+        """
+        item_visible = False
+        child_count = item.childCount()
+
+        # 자식 아이템을 재귀적으로 필터링
+        for i in range(child_count):
+            child = item.child(i)
+            if self.filter_item(child, checked_types):
+                item_visible = True
+
+        # 현재 아이템이 조건에 맞는지 검사
+        item_text = item.text(0).lower()
+        for checked_type in checked_types:
+            if checked_type in item_text:
+                item_visible = True
+                break  # 하나라도 포함되면 더 이상 검사할 필요 없음
+
+        # 아이템의 가시성 설정
+        item.setHidden(not item_visible)
+
+        return item_visible
+
+
     """
     기본 표시 셋팅
     """
@@ -764,17 +1076,70 @@ class SaverUIHandler(QWidget):
         self.ui.comboBox_filter.setCurrentIndex(0)
         self.ui.checkBox_avaliable_ver.setChecked(True)
         self.ui.checkBox_avaliable_path.setChecked(True)
+        # 필터 체크박스 셋팅
+        self.ui.checkBox_mod.setChecked(True)
+        self.ui.checkBox_rig.setChecked(True)
+        self.ui.checkBox_lkd.setChecked(True)
+        self.ui.checkBox_ani.setChecked(True)
+        self.ui.checkBox_lgt.setChecked(True)
+        self.ui.checkBox_cmp.setChecked(True)
+        self.ui.checkBox_mm.setChecked(True)
+        self.ui.checkBox_ly.setChecked(True)
+        self.ui.checkBox_fx.setChecked(True)
         # 좌측 레이어 셋팅
         self.set_path_filter()
         self.set_my_tasks_tree()
         self.set_asset_path_tree()
         self.set_shot_path_tree()
+        self.show_current_path_tree()
         # 하단 레이어 셋팅
         self.setup_bottom_layer()
+        # 이미지 추가
+        self.add_image()
+    
+    def add_image(self):    # UI에 이미지 추가
+        # 로딩화면에 peonix 아이콘 추가
+        peonix_path = f"{self.root_path}/_phoenix_/ui/image_source/desktop_icon.png"
+        pixmap = QPixmap(peonix_path)
+        sc_pixmap = pixmap.scaledToWidth(100)
+        self.ui.label_main_icon.setPixmap(sc_pixmap)
+        
+        # Saver home에 peonix 아이콘 추가
+        peonix_path = f"{self.root_path}/_phoenix_/ui/image_source/desktop_icon.png"
+        h_pixmap = QPixmap(peonix_path)
+        h_sc_pixmap = h_pixmap.scaledToWidth(40)
+        self.ui.label_icon.setPixmap(h_sc_pixmap)
+        
+        # user 아이콘 추가
+        user_icon_path = f"{self.root_path}/_phoenix_/ui/image_source/icon_profile.png"
+        u_pixmap = QPixmap(user_icon_path)
+        u_sc_pixmap = u_pixmap.scaledToWidth(30)
+        self.ui.label_user_icon.setPixmap(u_sc_pixmap)
     
     """
     좌 레이어 셋팅
     """
+    def show_current_path_tree(self):   # 현재 파일 경로에 맞게 파일트리 아이템을 선택하기.
+        """
+        처음 UI가 켜질 때, My Tasks 트리 위젯에서 현재 경로에 맞는 파일 트리 아이템을 선택해둡니다.
+        Shot 파트일 경우 Shots 트리위젯 아이템 또한 선택됩니다.
+        Asset 파트일 경우 Assets 트리위젯 아이템 또한 선택됩니다.
+        """
+        save_info, entity_type = self.store_save_info()
+        task_id = save_info['task']['id']
+        my_tasks_item = self.find_task_id_item(self.ui.treeWidget_my_tasks, task_id)
+        if my_tasks_item:
+            self.ui.treeWidget_my_tasks.setCurrentItem(my_tasks_item)
+            pass
+        
+        if entity_type == 'Shots':
+            item = self.find_task_id_item(self.ui.treeWidget_shots, task_id)
+            self.ui.treeWidget_shots.setCurrentItem(item)
+            
+        elif entity_type == 'Assets':
+            item = self.find_task_id_item(self.ui.treeWidget_assets, task_id)
+            self.ui.treeWidget_assets.setCurrentItem(item)
+        
     def show_path(self,index):    # 상단 경로 Tasks, Assets, Shots 별로 바꿔주기
         self.ui.stackedWidget_path.setCurrentIndex(index)
         
@@ -801,6 +1166,7 @@ class SaverUIHandler(QWidget):
             self.ui.label_detail.setText(detail)
     
     def set_my_tasks_tree(self):    # My Tasks 폴더구조 트리 띄우기
+        self.ui.treeWidget_my_tasks.clear()
         user_id = self.get_user_id()
         project_id = self.get_project_id()
         shot_list, asset_list = self.get_assigned_work(user_id,project_id)
@@ -812,11 +1178,11 @@ class SaverUIHandler(QWidget):
             shot_title_item.setExpanded(True)
             
             # Sequence와 Shot을 트리에 추가
-            for dic in shot_list:
-                seq_name = dic['sequence']['name']
-                seq_id = dic['sequence']['id']
-                shot_name = dic['shot']['name']
-                task_id = dic['task']['id']
+            for asset_dict in shot_list:
+                seq_name = asset_dict['sequence']['name']
+                seq_id = asset_dict['sequence']['id']
+                shot_name = asset_dict['shot']['name']
+                task_id = asset_dict['task']['id']
                 
                 
                 # Sequence 항목을 찾거나 생성
@@ -834,8 +1200,7 @@ class SaverUIHandler(QWidget):
                 # Shot 항목 추가
                 shot_item = QTreeWidgetItem(seq_item)
                 shot_item.setText(0, shot_name)
-                shot_item.setData(0,Qt.UserRole, task_id)
-                
+                shot_item.setData(0, Qt.UserRole, task_id)
         if asset_list:
             # 'Assets' 항목 추가
             asset_title_item = QTreeWidgetItem(self.ui.treeWidget_my_tasks)
@@ -843,10 +1208,10 @@ class SaverUIHandler(QWidget):
             asset_title_item.setExpanded(True)
             
             # Asset Type과 Asset을 트리에 추가
-            for dic in asset_list:
-                asset_type_name = dic['asset_type']
-                asset_name = dic['asset']['name']
-                task_id = dic['task']['id']
+            for asset_dict in asset_list:
+                asset_type_name = asset_dict['asset_type']
+                asset_name = asset_dict['asset']['name']
+                task_id = asset_dict['task']['id']
                 
                 # Asset Type 항목을 찾거나 생성
                 asset_type_item = None
@@ -895,6 +1260,7 @@ class SaverUIHandler(QWidget):
             self.ui.label_asset_task.setText(task)
         
     def set_asset_path_tree(self):  # Asset 폴더구조 트리 띄우기 ★
+        self.ui.treeWidget_assets.clear()
         asset_type_list = self.get_asset_types()
         assets = self.get_assets()
         
@@ -917,7 +1283,6 @@ class SaverUIHandler(QWidget):
                     task_item.setText(0, task['step_name'])
                     task_item.setData(0, Qt.UserRole, task['id'])
             
-    
     """ Shot """
     def change_shot_path(self): # Shot 상단 경로 바꿔주기
         selected_item = self.ui.treeWidget_shots.currentItem()
@@ -949,6 +1314,7 @@ class SaverUIHandler(QWidget):
             self.ui.label_shot_task.setText(task)
         
     def set_shot_path_tree(self):    # Shot 폴더구조 트리 띄우기 ★
+        self.ui.treeWidget_shots.clear()
         sequences = self.get_sequences()
         
         for seq in sequences:
@@ -999,7 +1365,7 @@ class SaverUIHandler(QWidget):
         # 테이블의 높이를 조정합니다.
         table_widget.setFixedHeight(total_height)
         
-    def fill_table_with_data(self, table_widget, status_list, versions, thumbnail_list, entity_type, asset_or_shot):    # 데이터를 테이블 위젯에 채우기
+    def fill_table_with_data(self, table_widget, status_list, versions, thumbnail_list, status_type):    # 데이터를 테이블 위젯에 채우기
         """
         WIP 또는 Pub 데이터를 테이블 위젯에 채우는 함수입니다.
         """
@@ -1009,12 +1375,19 @@ class SaverUIHandler(QWidget):
         # 테이블 위젯의 행 수를 데이터 목록의 길이로 설정
         table_widget.setRowCount(len(status_list))
         
+        # 탭 위젯 이름 옆에 가진 파일 갯수 표시
+        if status_type == 'wip':
+            self.ui.tabWidget_file_list.setTabText(1, f'Working({len(status_list)})')
+        if status_type == 'pub':
+            self.ui.tabWidget_file_list.setTabText(2, f'Publishes({len(status_list)})')
+        
         row = 0
         for status in status_list:
-            version_info = versions.get(entity_type, {}).get(status, {})
+            version_info = versions.get(status_type, {}).get(status, {})
             ver_id = version_info.get('id', None)
-            artist = version_info.get('artist', 'Unknown')
-            date = version_info.get('created_at', 'Unknown')
+            file_type = version_info.get('file_type') or 'Unknown'
+            artist = version_info.get('artist') or 'Unknown'
+            date = version_info.get('created_at') or 'Unknown'
 
             # 썸네일 설정
             self.set_thumbnail(table_widget, row, ver_id, thumbnail_list)
@@ -1024,7 +1397,7 @@ class SaverUIHandler(QWidget):
             font = QFont()
             font.setPointSize(8)
             info_text.setFont(font)
-            info_text.appendPlainText(asset_or_shot)
+            info_text.appendPlainText(file_type)
             info_text.appendPlainText(status)
             info_text.appendPlainText(artist)
             info_text.appendPlainText(date)
@@ -1094,14 +1467,14 @@ class SaverUIHandler(QWidget):
             wip_table = QTableWidget()
             self.initialize_table_widget(wip_table)
             self.ui.treeWidget_grid_total.setItemWidget(wip_table_item, 0, wip_table)
-            self.fill_table_with_data(wip_table, wips, versions, thumbnail_list, 'wip', selected_item.parent().text(0))
+            self.fill_table_with_data(wip_table, wips, versions, thumbnail_list, 'wip')
 
         if pubs:
             pub_table_item = QTreeWidgetItem(publishes_item)
             pub_table = QTableWidget()
             self.initialize_table_widget(pub_table)
             self.ui.treeWidget_grid_total.setItemWidget(pub_table_item, 0, pub_table)
-            self.fill_table_with_data(pub_table, pubs, versions, thumbnail_list, 'pub', selected_item.parent().text(0))
+            self.fill_table_with_data(pub_table, pubs, versions, thumbnail_list, 'pub')
 
     def set_file_table_list(self, filter):  # WIP 및 Pub 파일을 나누어 보여주기 ★
         """
@@ -1110,6 +1483,11 @@ class SaverUIHandler(QWidget):
         # 테이블 위젯 초기화
         self.ui.tableWidget_list_pub.clear()
         self.ui.tableWidget_list_wip.clear()
+        
+        # 탭 위젯 파일 갯수 초기화
+        self.ui.tabWidget_file_list.setTabText(1, 'Working')
+        self.ui.tabWidget_file_list.setTabText(2, 'Publishes')
+        
 
         # 필터에 따라 선택된 항목 가져오기
         if filter == 'my_task_signal':
@@ -1136,23 +1514,26 @@ class SaverUIHandler(QWidget):
 
         # WIP와 Pub 데이터를 테이블 위젯에 채우기
         if wips:
-            self.fill_table_with_data(self.ui.tableWidget_list_wip, wips, versions, thumbnail_list, 'wip', selected_item.parent().text(0))
+            self.fill_table_with_data(self.ui.tableWidget_list_wip, wips, versions, thumbnail_list, 'wip')
 
         if pubs:
-            self.fill_table_with_data(self.ui.tableWidget_list_pub, pubs, versions, thumbnail_list, 'pub', selected_item.parent().text(0))
-
-    
+            self.fill_table_with_data(self.ui.tableWidget_list_pub, pubs, versions, thumbnail_list, 'pub')
+        
     """
     하단 레이어 셋팅
     """
-    
     def setup_bottom_layer(self):   # 하단 레이어 셋팅
         self.set_new_file_name()
         self.set_new_file_ver()
         self.set_file_type()
         self.set_preview()
         self.set_work_area()
-    
+        
+        if not self.check_right_entity():
+            self.ui.label_validate_path.setText('■ The save path is not valid.')
+        else: 
+            self.ui.label_validate_path.clear()
+            
     def set_new_file_name(self):    # 파일 이름 정보 띄워주기
         file_name_with_ver = os.path.basename(current_path)
         now_version = self.check_file_version()
@@ -1204,8 +1585,6 @@ class SaverUIHandler(QWidget):
         self.ui.label_work_area.setText(work_area)
         self.store_save_info()
     
-    
-    
     """
     기타
     """
@@ -1214,13 +1593,11 @@ class SaverUIHandler(QWidget):
     
     def change_current_path(self, filter):  # 저장될 경로 바꾸기
         global current_path
-        root_path = '/home/rapa/phoenix_pipeline_folders/'
+        root_path = f'{self.root_path}/phoenix_pipeline_folders/'
         
         # 필터에 따라 선택된 항목 가져오기
         if filter == 'my_task_signal':
-            _, entity_type = self.store_save_info()
             selected_item = self.ui.treeWidget_my_tasks.currentItem()
-            entity = entity_type
             
         elif filter == 'shot_signal':
             selected_item = self.ui.treeWidget_shots.currentItem()
@@ -1235,12 +1612,15 @@ class SaverUIHandler(QWidget):
             return
         if not selected_item.childCount() == 0:
             return
+        if selected_item.parent().parent() == None:
+            return
+        
+        if filter == 'my_task_signal':
+            entity = selected_item.parent().parent().text(0)
         
         # 선택된 항목에서 정보 가져오기
         task_id = selected_item.data(0, Qt.UserRole)
         task_info = self.get_task_related_info(task_id)
-        print('--------task_info-------')
-        print(task_info)        
         
         if entity ==  'Shots':
             new_current_path_without_ext = os.path.join(root_path,task_info['project_name'],
@@ -1262,7 +1642,7 @@ class SaverUIHandler(QWidget):
     def make_save_local_path(self): # 로컬에 저장할 경로 만들기
         save_info, entity_type = self.store_save_info()
         
-        root_path = "/home/rapa/phoenix_pipeline_folders/"
+        root_path = f"{self.root_path}/phoenix_pipeline_folders/"
         project_name = save_info['project']['name']
         if entity_type == "Shots":
             seq_name = save_info['sequence']['name']
@@ -1286,29 +1666,59 @@ class SaverUIHandler(QWidget):
         return local_path
     
     def save_file(self):    # 로컬에 파일을 저장하고 샷그리드로 링크 걸어주기
+        if not self.check_right_entity():
+            return print('저장할 경로를 다시 확인해주세요.')
+        project_id = self.get_project_id()
+        user_id = self.get_user_id()
         file_saver = FileSaver()
         file_path = self.make_save_local_path()
-        print(f"여기 로컬에 저장할거임 : {file_path}")
         # 로컬에 파일 저장하기
         ext = current_path.split('.')[-1]
-        print(f"확장자 : {ext}")
         if ext in ['nk', 'nknc']:
             file_saver.save_in_local('Nuke', file_path)
-            print(f'save모듈로 넘어감')
+            # 샷그리드에 파일경로 업로드
+            save_info, entity_type = self.store_save_info()
+            created_ver_id = file_saver.upload_to_shotgrid(save_info, entity_type, file_path, ext, user_id)
+            # 새로운 데이터 정보 반영해서 UI 업데이트
+            self.explorer_json.update_version_json(project_id, created_ver_id, save_info, entity_type)
+            self.initial_path = current_path
+            self.first_show()
+            self.show_current_path_tree()
+            
         elif ext in ['ma', 'mb']:
             file_saver.save_in_local('Maya', file_path)
-            
-        # 샷그리드에 파일경로 업로드
-        save_info, entity_type = self.store_save_info()
-        file_saver.upload_to_shotgrid(save_info, entity_type, file_path)
+            # 샷그리드에 파일경로 업로드
+            save_info, entity_type = self.store_save_info()
+            created_ver_id = file_saver.upload_to_shotgrid(save_info, entity_type, file_path, ext, user_id)
+            # 새로운 데이터 정보 반영해서 UI 업데이트
+            self.explorer_json.update_version_json(project_id, created_ver_id, save_info, entity_type)
+            self.initial_path = current_path
+            self.first_show()
+            self.show_current_path_tree()
         
-        self.close()
-        
+    def find_root_path(self):   # 현재 컴퓨터의 기본 주소를 받습니다.
+        self.root_path = os.path.expanduser('~')
+    
+    def center(self):   # 창 가운데 띄우기
+        qr = self.frameGeometry()
+        cp = QGuiApplication.primaryScreen().availableGeometry().center()
+        qr.moveCenter(cp)
+        new_top_left = qr.topLeft()
+        # new_top_left -= QPoint(300, 120)
+        self.move(new_top_left)
+    
+             
     def setting(self):
-        ui_file_path = "/home/rapa/_phoenix_/ui/saver_mockup.ui" 
-        ui_file = QFile(ui_file_path)
-        self.ui = QUiLoader().load(ui_file,self)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        self.ui = Ui_Form()
+        self.ui.setupUi(self)
+        
+        """
+        UI 표시 셋팅 
+        """
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)   # 항상 위에 띄우기
+        
+        # 창을 화면 중앙에 띄우기
+        self.center()
 
 
 if __name__ == "__main__":

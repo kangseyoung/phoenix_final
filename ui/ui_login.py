@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-## Form generated from reading UI file 'loginLujEpj.ui'
+## Form generated from reading UI file 'login_v2kvdGOL.ui'
 ##
 ## Created by: Qt User Interface Compiler version 6.2.4
 ##
@@ -33,25 +33,15 @@ class Ui_Form(object):
 
         self.gridLayout = QGridLayout()
         self.gridLayout.setObjectName(u"gridLayout")
-        self.lineEdit_2 = QLineEdit(Form)
-        self.lineEdit_2.setObjectName(u"lineEdit_2")
+        self.lineEdit = QLineEdit(Form)
+        self.lineEdit.setObjectName(u"lineEdit")
 
-        self.gridLayout.addWidget(self.lineEdit_2, 1, 1, 1, 1)
+        self.gridLayout.addWidget(self.lineEdit, 0, 1, 1, 1)
 
         self.label = QLabel(Form)
         self.label.setObjectName(u"label")
 
         self.gridLayout.addWidget(self.label, 0, 0, 1, 1)
-
-        self.label_2 = QLabel(Form)
-        self.label_2.setObjectName(u"label_2")
-
-        self.gridLayout.addWidget(self.label_2, 1, 0, 1, 1)
-
-        self.lineEdit = QLineEdit(Form)
-        self.lineEdit.setObjectName(u"lineEdit")
-
-        self.gridLayout.addWidget(self.lineEdit, 0, 1, 1, 1)
 
 
         self.verticalLayout.addLayout(self.gridLayout)
@@ -82,8 +72,7 @@ class Ui_Form(object):
 
     def retranslateUi(self, Form):
         Form.setWindowTitle(QCoreApplication.translate("Form", u"Form", None))
-        self.label.setText(QCoreApplication.translate("Form", u"ID", None))
-        self.label_2.setText(QCoreApplication.translate("Form", u"password", None))
+        self.label.setText(QCoreApplication.translate("Form", u"E-MAIL", None))
         self.label_3.setText(QCoreApplication.translate("Form", u"Please enter your ID", None))
         self.pushButton.setText(QCoreApplication.translate("Form", u"Sign In", None))
     # retranslateUi

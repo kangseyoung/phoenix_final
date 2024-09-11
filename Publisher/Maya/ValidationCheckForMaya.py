@@ -57,6 +57,7 @@ class ValidationCheckForMaya():
         :param default_materials: 기본 재질 목록. 삭제하지 않을 재질들을 포함합니다.
         :return: 사용되지 않는 재질의 리스트
         """
+        validity = True
         if default_materials is None:
             default_materials = ['lambert1', 'standardSurface1', 'particleCloud1']
         
@@ -78,8 +79,9 @@ class ValidationCheckForMaya():
         all_materials = cmds.ls(materials=True)
         unused_materials = list(set(all_materials) - set(default_materials) - used_materials)
         print(f"Unused Materials : {unused_materials}")
-        
-        return unused_materials
+        if unused_materials:
+            validity = False
+        return unused_materials, validity
         
     def delete_unused_materials(self):  # 씬에서 사용되지 않는 재질을 삭제 # mod, rig 외 사용 금지!!!!!!
         
@@ -105,7 +107,7 @@ class ValidationCheckForMaya():
         # cmds.confirmDialog(title='완료', message='사용되지 않는 재질을 삭제했습니다.', button=['OK'])
     
     def execute_checking_validation(self):
-
+        
         pass
     
     def check_shadow_quality(self):
@@ -156,6 +158,7 @@ class ValidateByTask(ValidationCheckForMaya):
         check_list = [""]
         if task == "mod":
             check_list = ["Check if there are ngons or tri-polygons in the mesh. ","Check if there are any unused materials.","Check if there is no naming space."]
+            
         elif task == "rig":
             check_list = ["Check if there are any unused materials.","Check if there is no naming space.","Check that parent chain and hierarchy are correct"]
         elif task == "lkd":
@@ -173,3 +176,6 @@ class ValidateByTask(ValidationCheckForMaya):
             
             
         return check_list
+    def validate_mod(self):
+        self.check_all_non_quads()
+        self.list_unused_materials()
